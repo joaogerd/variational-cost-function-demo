@@ -1,0 +1,46 @@
+name: Regenerate demo GIF
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - scalar_variational_minimization.py
+      - .github/workflows/regenerate-demo-gif.yml
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate-gif:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate animated GIF
+        run: |
+          python scalar_variational_minimization.py \
+            --save-gif figures/scalar_variational_minimization.gif \
+            --gif-interval 1200
+
+      - name: Commit regenerated GIF
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add figures/scalar_variational_minimization.gif
+          if git diff --cached --quiet; then
+            echo "GIF unchanged."
+          else
+            git commit -m "docs: regenerate animated variational minimization demo"
+            git push
+          fi
