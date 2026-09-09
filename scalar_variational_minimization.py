@@ -2,21 +2,20 @@
 """
 Demonstração didática da minimização variacional em um problema escalar.
 
-Este programa foi escrito para ilustrar, da forma mais simples possível, um
-comportamento típico da assimilação variacional de dados:
+Este programa ilustra, da forma mais simples possível, um comportamento típico
+observado em assimilação variacional de dados:
 
     J(x) = J_B(x) + J_O(x)
 
-Durante a minimização, quando o estado inicial é o background x_b, é comum
-observar:
+Quando a minimização parte do background x_b, é comum observar:
 
     J_O  diminui
     J_B  aumenta
     J    diminui
 
-Isso não representa uma falha do minimizador. O termo J_B começa em seu mínimo
-quando x = x_b. Para aproximar o estado das observações, o minimizador precisa
-se afastar do background; esse afastamento aumenta J_B, mas pode produzir uma
+Isso não é uma falha do minimizador. O termo J_B começa no seu mínimo quando
+x = x_b. Para aproximar o estado das observações, o minimizador precisa se
+afastar do background; esse afastamento aumenta J_B, mas pode produzir uma
 redução ainda maior em J_O e, portanto, reduzir a função custo total J.
 
 Problema considerado
@@ -25,9 +24,7 @@ O exemplo possui apenas uma variável de estado x e usa um operador de
 observação identidade, H = 1. Assim,
 
     J_B(x) = 1/2 * (x - x_b)^2 / B
-
     J_O(x) = 1/2 * (y - x)^2 / R
-
     J(x)   = J_B(x) + J_O(x)
 
 onde:
@@ -45,7 +42,7 @@ Neste script:
     R   = 1
 
 A solução analítica é x_a = 8. Como R < B, a observação possui menor variância
-de erro que o background e, por isso, a análise fica mais próxima de y.
+que o background e, por isso, a análise fica mais próxima de y.
 
 Minimizador
 -----------
@@ -54,8 +51,8 @@ Para tornar o processo visível passo a passo, usamos gradiente descendente:
     x_{k+1} = x_k - alpha * grad J(x_k)
 
 Esse algoritmo foi escolhido pela simplicidade didática. Sistemas reais de
-assimilação podem usar algoritmos muito mais sofisticados, mas a interpretação
-da função custo continua sendo a mesma.
+assimilação usam algoritmos mais sofisticados, mas a interpretação da função
+custo continua sendo a mesma.
 
 Interpretação dos painéis
 -------------------------
@@ -71,7 +68,10 @@ PAINEL ESQUERDO — espaço de estado
 
         (x_k, J(x_k))
 
-    Ela caminha do background em direção ao mínimo da função custo total.
+    Além disso, um TRACEJADO VERMELHO liga as posições anteriores da bolinha
+    vermelha. Esse tracejado é importante porque mostra que a trajetória do
+    minimizador é DISCRETA, composta pelos pontos x_0, x_1, x_2, ...,
+    e não um deslocamento contínuo ao longo da curva.
 
 PAINEL DIREITO — história da minimização
 
@@ -110,154 +110,92 @@ background e observações.
 import argparse
 from pathlib import Path
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.animation import FuncAnimation, PillowWriter
 
 
 # ============================================================================
 # 1. DEFINIÇÃO DO PROBLEMA DE ASSIMILAÇÃO
 # ============================================================================
-#
-# O objetivo é assimilar uma única observação y em uma única variável de
-# estado x. O problema foi mantido escalar para que cada termo da função custo
-# possa ser visto diretamente no gráfico.
-#
-# Em um sistema atmosférico real, x conteria muitas variáveis (temperatura,
-# vento, umidade, pressão etc.) em milhões de pontos do domínio.
+# O problema foi escolhido para ser o mais simples possível. Ainda assim, ele
+# preserva todos os ingredientes conceituais importantes da minimização
+# variacional: background, observação, função custo e balanço entre J_B e J_O.
 # ============================================================================
 
-xb = 0.0       # x_b: background / primeira estimativa
+xb = 0.0
+"""Background (primeira estimativa do estado)."""
 
-y = 10.0       # y: observação
+y = 10.0
+"""Observação escalar assimilada."""
 
-# Desvios-padrão dos erros associados às duas fontes de informação.
-# Quanto menor o desvio-padrão, maior a confiança estatística naquela fonte.
-sigma_b = 2.0  # erro-padrão do background
-sigma_o = 1.0  # erro-padrão da observação
+sigma_b = 2.0
+"""Desvio-padrão do erro do background."""
 
-# No caso escalar, as matrizes de covariância B e R reduzem-se a variâncias.
+sigma_o = 1.0
+"""Desvio-padrão do erro da observação."""
+
 B = sigma_b**2
+"""Variância do erro do background."""
+
 R = sigma_o**2
+"""Variância do erro da observação."""
 
 
 # ============================================================================
-# 2. TERMOS DA FUNÇÃO CUSTO
+# 2. FUNÇÕES CUSTO
+# ============================================================================
+# Em um problema escalar com H = 1:
+#
+#   J_B(x) = 1/2 * (x - x_b)^2 / B
+#   J_O(x) = 1/2 * (y - x)^2 / R
+#   J(x)   = J_B(x) + J_O(x)
+#
+# J_B mede o custo associado a afastar a solução do background.
+# J_O mede o custo associado a não reproduzir a observação.
+# J    mede o compromisso total entre essas duas exigências.
 # ============================================================================
 
 
 def Jb(x):
     """Calcula o termo de background J_B(x).
 
-    Matemática
-    ----------
-        J_B(x) = 1/2 * (x - x_b)^2 / B
-
-    Interpretação
-    -------------
-    J_B mede o custo estatístico de afastar o estado x do background x_b.
-
-    Como a minimização começa em x = x_b, temos inicialmente:
-
-        J_B(x_b) = 0
-
-    Portanto, J_B já começa em seu menor valor possível. À medida que o
-    minimizador move x para incorporar a observação, x se afasta de x_b e
-    J_B tende a aumentar.
-
     Parameters
     ----------
-    x : float ou numpy.ndarray
-        Estado no qual J_B será avaliado.
+    x : float or numpy.ndarray
+        Estado escalar no qual o custo será avaliado.
 
     Returns
     -------
-    float ou numpy.ndarray
-        Valor do termo de background.
+    float or numpy.ndarray
+        Valor de J_B no estado x.
     """
     return 0.5 * (x - xb) ** 2 / B
-
 
 
 def Jo(x):
     """Calcula o termo observacional J_O(x).
 
-    Matemática
-    ----------
-    Para H = 1,
-
-        J_O(x) = 1/2 * (y - x)^2 / R
-
-    Interpretação
-    -------------
-    J_O mede o custo estatístico do desajuste entre a observação y e o estado
-    x representado no espaço da observação.
-
-    Neste exemplo H(x) = x, então o termo observacional é mínimo em x = y.
-    À medida que o minimizador move x em direção à observação, J_O diminui.
-
-    Parameters
-    ----------
-    x : float ou numpy.ndarray
-        Estado no qual J_O será avaliado.
-
-    Returns
-    -------
-    float ou numpy.ndarray
-        Valor do termo observacional.
+    Como H = 1, o equivalente do modelo à observação é o próprio x.
+    Assim, o desajuste observacional é simplesmente (y - x).
     """
     return 0.5 * (y - x) ** 2 / R
 
 
-
 def J(x):
-    """Calcula a função custo total J(x) = J_B(x) + J_O(x).
-
-    O minimizador não procura minimizar J_B ou J_O isoladamente. Ele procura o
-    estado que minimiza a soma dos dois termos, ou seja, o melhor compromisso
-    estatístico entre background e observação.
-
-    Parameters
-    ----------
-    x : float ou numpy.ndarray
-        Estado no qual a função custo total será avaliada.
-
-    Returns
-    -------
-    float ou numpy.ndarray
-        Valor da função custo total.
-    """
+    """Calcula a função custo total J(x) = J_B(x) + J_O(x)."""
     return Jb(x) + Jo(x)
 
 
-
 def grad_J(x):
-    """Calcula o gradiente dJ/dx da função custo total.
+    """Calcula o gradiente da função custo total.
 
-    Para o problema escalar adotado aqui,
+    Para o problema escalar:
 
-        dJ/dx = (x - x_b)/B + (x - y)/R
+        dJ/dx = (x - x_b) / B + (x - y) / R
 
-    O primeiro termo vem de J_B e tende a puxar a solução de volta para o
-    background. O segundo vem de J_O e tende a puxar a solução em direção à
-    observação.
-
-    No mínimo da função custo,
-
-        grad J(x_a) = 0,
-
-    o que implica o equilíbrio entre as contribuições de background e
-    observação.
-
-    Parameters
-    ----------
-    x : float
-        Estado corrente do minimizador.
-
-    Returns
-    -------
-    float
-        Gradiente da função custo no estado x.
+    O minimizador usa esse gradiente para atualizar x_k via gradiente
+    descendente.
     """
     return (x - xb) / B + (x - y) / R
 
@@ -265,98 +203,62 @@ def grad_J(x):
 # ============================================================================
 # 3. SOLUÇÃO ANALÍTICA
 # ============================================================================
-#
-# Em um problema linear e escalar com H = 1, podemos calcular diretamente a
-# análise que minimiza J:
-#
-#              R x_b + B y
-#       x_a = ----------------
-#                 B + R
-#
-# Neste caso:
-#
-#       x_a = (1*0 + 4*10)/(4 + 1) = 8
-#
-# A solução analítica não é usada para conduzir a minimização. Ela serve como
-# referência para verificar se o algoritmo iterativo converge para o ponto
-# correto.
+# A solução exata do problema escalar serve como referência para interpretar
+# a convergência do minimizador numérico.
 # ============================================================================
 
 xa = (R * xb + B * y) / (B + R)
+"""Análise exata do problema escalar."""
 
 
 # ============================================================================
-# 4. MINIMIZAÇÃO POR GRADIENTE DESCENDENTE
+# 4. ROTINA DE MINIMIZAÇÃO
+# ============================================================================
+# Esta função gera toda a sequência x_0, x_1, ..., x_k.
+# O histórico é armazenado porque será usado nos dois painéis:
+#
+#   - no painel esquerdo, para mostrar a trilha discreta da bolinha vermelha;
+#   - no painel direito, para construir as curvas J_B(k), J_O(k) e J(k).
 # ============================================================================
 
 
 def run_minimization(alpha=0.5, n_iterations=10):
-    """Executa a minimização e armazena o estado de cada iteração.
-
-    O algoritmo utilizado é o gradiente descendente:
-
-        x_{k+1} = x_k - alpha * grad J(x_k)
-
-    A minimização começa exatamente no background:
-
-        x_0 = x_b
-
-    Em cada iteração armazenamos não apenas x_k, mas também J_B(x_k), J_O(x_k),
-    J(x_k) e o gradiente. Esse histórico será usado pelo painel direito da
-    animação.
+    """Executa gradiente descendente e armazena o histórico completo.
 
     Parameters
     ----------
     alpha : float, optional
-        Tamanho do passo do gradiente descendente. O valor padrão é 0.5.
-        Neste exemplo quadrático ele produz uma convergência suave e fácil de
-        acompanhar visualmente.
-
+        Tamanho do passo do gradiente descendente.
     n_iterations : int, optional
-        Número de passos de minimização. O histórico contém também a condição
-        inicial k=0, portanto possui n_iterations + 1 registros.
+        Número total de iterações do minimizador.
 
     Returns
     -------
     list of dict
-        Histórico da minimização. Cada dicionário contém:
-
-        ``k``
-            Número da iteração.
-        ``x``
-            Estado corrente x_k.
-        ``Jb``
-            Valor J_B(x_k).
-        ``Jo``
-            Valor J_O(x_k).
-        ``J``
-            Valor total J(x_k).
-        ``grad``
-            Gradiente de J no estado x_k.
+        Lista contendo, para cada iteração k:
+        - k      : número da iteração
+        - x      : estado x_k
+        - Jb     : J_B(x_k)
+        - Jo     : J_O(x_k)
+        - J      : J(x_k)
+        - grad   : grad J(x_k)
     """
     history = []
-
-    # A condição inicial é o próprio background. Esse detalhe é essencial para
-    # entender por que J_B começa em zero e cresce durante a minimização.
     x = xb
 
     for k in range(n_iterations + 1):
-        # Avaliamos todos os termos da função custo no MESMO estado x_k.
-        history.append({
-            "k": k,
-            "x": x,
-            "Jb": Jb(x),
-            "Jo": Jo(x),
-            "J": J(x),
-            "grad": grad_J(x),
-        })
+        history.append(
+            {
+                "k": k,
+                "x": x,
+                "Jb": Jb(x),
+                "Jo": Jo(x),
+                "J": J(x),
+                "grad": grad_J(x),
+            }
+        )
 
         if k < n_iterations:
-            # Passo do gradiente descendente.
-            #
-            # Se grad J < 0, subtrair o gradiente move x para a direita.
-            # Se grad J > 0, move x para a esquerda.
-            # Em ambos os casos buscamos reduzir J.
             x = x - alpha * grad_J(x)
 
     return history
@@ -365,61 +267,47 @@ def run_minimization(alpha=0.5, n_iterations=10):
 # ============================================================================
 # 5. CRIAÇÃO DA FIGURA
 # ============================================================================
+# O layout usa dois painéis lado a lado. Isso torna fácil comparar:
+#
+#   painel esquerdo -> geometria da função custo no espaço de estado;
+#   painel direito  -> evolução das quantidades ao longo das iterações.
+# ============================================================================
 
 
 def create_figure():
-    """Cria os dois painéis usados na demonstração.
-
-    Returns
-    -------
-    fig : matplotlib.figure.Figure
-        Figura principal.
-
-    ax_state : matplotlib.axes.Axes
-        Painel esquerdo. Mostra as funções no espaço de estado x.
-
-    ax_iter : matplotlib.axes.Axes
-        Painel direito. Mostra a evolução dos custos com a iteração k.
-    """
+    """Cria a figura e retorna os dois eixos principais."""
     fig, (ax_state, ax_iter) = plt.subplots(
-        1, 2, figsize=(15, 6.8), constrained_layout=True
+        1,
+        2,
+        figsize=(15, 6.8),
+        constrained_layout=True,
     )
     return fig, ax_state, ax_iter
 
 
 # ============================================================================
-# 6. DESENHO DE UMA ITERAÇÃO
+# 6. DESENHO DE CADA QUADRO
+# ============================================================================
+# Esta é a função central do programa. Cada chamada desenha a figura
+# correspondente a uma iteração específica do minimizador.
 # ============================================================================
 
 
 def draw_frame(fig, ax_state, ax_iter, history, frame):
-    """Desenha uma etapa completa da minimização nos dois painéis.
-
-    Esta função é o núcleo visual da demonstração. Um único índice ``frame``
-    identifica o estado x_k atual. A partir dele desenhamos simultaneamente:
-
-    1. no painel esquerdo, onde x_k está localizado nas funções J_B(x), J_O(x)
-       e J(x);
-    2. no painel direito, toda a história J_B(k), J_O(k) e J(k) acumulada até
-       aquele mesmo instante.
-
-    A ligação entre os painéis é, portanto:
-
-        x_k  ->  J_B(x_k), J_O(x_k), J(x_k)  ->  ponto da iteração k
+    """Desenha o quadro correspondente a uma iteração.
 
     Parameters
     ----------
     fig : matplotlib.figure.Figure
         Figura principal.
-
-    ax_state, ax_iter : matplotlib.axes.Axes
-        Eixos dos painéis esquerdo e direito.
-
+    ax_state : matplotlib.axes.Axes
+        Eixo do painel esquerdo (espaço de estado).
+    ax_iter : matplotlib.axes.Axes
+        Eixo do painel direito (histórico por iteração).
     history : list of dict
-        Histórico produzido por :func:`run_minimization`.
-
+        Histórico produzido por ``run_minimization``.
     frame : int
-        Índice da iteração a ser mostrada.
+        Índice da iteração a ser desenhada.
     """
     data = history[frame]
 
@@ -430,51 +318,31 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
     jt = data["J"]
     grad = data["grad"]
 
-    # Domínio usado apenas para desenhar as três funções suaves no painel
-    # esquerdo. Ele não participa da minimização numérica.
     xx = np.linspace(-2.0, 12.0, 600)
 
-    # Cada quadro é redesenhado do zero. Isso torna a implementação mais
-    # simples e privilegia a clareza didática em vez de otimizações gráficas.
     ax_state.clear()
     ax_iter.clear()
 
-    # ------------------------------------------------------------------------
-    # PAINEL ESQUERDO — FUNÇÕES NO ESPAÇO DE ESTADO
-    # ------------------------------------------------------------------------
-    #
-    # IMPORTANTE:
-    # J_B(x), J_O(x) e J(x) são funções fixas. Elas NÃO se deslocam durante a
-    # minimização. O elemento que se move é x_k.
-    # ------------------------------------------------------------------------
+    # ========================================================================
+    # PAINEL ESQUERDO — ESPAÇO DE ESTADO
+    # ========================================================================
+    # As curvas abaixo são FIXAS. Elas são funções do estado x.
+    # O minimizador não as move. O que se move é o estado atual x_k.
+    # ========================================================================
 
-    line_jb, = ax_state.plot(
-        xx, Jb(xx), linewidth=2.2, label=r"$J_B(x)$"
-    )
-    line_jo, = ax_state.plot(
-        xx, Jo(xx), linewidth=2.2, label=r"$J_O(x)$"
-    )
-    ax_state.plot(
-        xx, J(xx), linewidth=3.0, label=r"$J(x)=J_B(x)+J_O(x)$"
-    )
+    line_jb, = ax_state.plot(xx, Jb(xx), linewidth=2.2, label=r"$J_B(x)$")
+    line_jo, = ax_state.plot(xx, Jo(xx), linewidth=2.2, label=r"$J_O(x)$")
+    ax_state.plot(xx, J(xx), linewidth=3.0, label=r"$J(x)=J_B(x)+J_O(x)$")
 
-    # Três referências fixas no espaço de estado:
-    #   x_b -> ponto de partida;
-    #   y   -> observação;
-    #   x_a -> mínimo analítico de J.
+    # Referências fixas do problema:
+    #   x_b -> posição do background
+    #   y   -> posição da observação
+    #   x_a -> posição da análise exata
     ax_state.axvline(xb, linestyle="--", linewidth=1.4, alpha=0.55)
     ax_state.axvline(y, linestyle="--", linewidth=1.4, alpha=0.55)
     ax_state.axvline(xa, linestyle=":", linewidth=2.0, alpha=0.85)
 
-    # ------------------------------------------------------------------------
-    # ESTADO CORRENTE x_k
-    # ------------------------------------------------------------------------
-    #
-    # A linha vermelha é deliberadamente o principal elemento móvel do painel.
-    # Ela representa UM ÚNICO estado x_k. Ao atravessar as três curvas, mostra
-    # que J_B, J_O e J são todos avaliados no mesmo estado.
-    # ------------------------------------------------------------------------
-
+    # A linha vertical vermelha marca o estado atual x_k.
     ax_state.axvline(
         xk,
         color="red",
@@ -483,8 +351,31 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
         label=rf"estado atual $x_k={xk:.2f}$",
     )
 
-    # Bolinha vermelha: posição atual do minimizador na função custo TOTAL.
-    # Em outras palavras, representa o ponto (x_k, J(x_k)).
+    # ------------------------------------------------------------------------
+    # TRAJETÓRIA DISCRETA DA BOLINHA VERMELHA
+    # ------------------------------------------------------------------------
+    # Este tracejado vermelho é importante didaticamente: ele mostra que a
+    # minimização é composta por uma sequência discreta de iterações
+    # (x_0, x_1, x_2, ...) e não por um deslocamento contínuo sobre a curva J.
+    # ------------------------------------------------------------------------
+    shown = history[: frame + 1]
+    path_x = [d["x"] for d in shown]
+    path_J = [d["J"] for d in shown]
+
+    ax_state.plot(
+        path_x,
+        path_J,
+        "o--",
+        color="red",
+        linewidth=1.4,
+        markersize=4,
+        alpha=0.65,
+        zorder=8,
+        label="trajetória discreta do minimizador",
+    )
+
+    # Ponto principal: bolinha vermelha indicando a posição atual do minimizador
+    # sobre a função custo total J(x).
     ax_state.scatter(
         xk,
         jt,
@@ -495,7 +386,8 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
         zorder=10,
     )
 
-    # Pontos auxiliares: componentes J_B e J_O avaliadas no mesmo x_k.
+    # Pontos auxiliares: valores de J_B(x_k) e J_O(x_k) avaliados no mesmo x_k.
+    # Isso reforça a ideia de que os três termos são funções do MESMO estado.
     ax_state.scatter(
         xk,
         jb,
@@ -515,9 +407,8 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
         zorder=9,
     )
 
-    # Segmento vertical entre os valores reforça visualmente a ideia:
-    #
-    #       um x_k -> três avaliações de custo.
+    # Segmento vertical conectando visualmente J_B(x_k), J_O(x_k) e J(x_k).
+    # Ele deixa claro que todos são avaliados na mesma abscissa x_k.
     ax_state.plot(
         [xk, xk],
         [min(jb, jo, jt), max(jb, jo, jt)],
@@ -526,7 +417,7 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
         alpha=0.35,
     )
 
-    # Valores numéricos da iteração atual junto aos três pontos.
+    # Rótulos dos valores calculados no estado atual.
     ax_state.annotate(
         rf"$J_B(x_k)={jb:.2f}$",
         (xk, jb),
@@ -552,13 +443,12 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
         color="red",
     )
 
-    # Identificação das três posições conceitualmente importantes.
     y_label = 53.0
     ax_state.text(xb, y_label, r"$x_b$", ha="center", va="center")
     ax_state.text(xa, y_label, r"$x_a$", ha="center", va="center")
     ax_state.text(y, y_label, r"$y$", ha="center", va="center")
 
-    # Mensagem dinâmica que descreve o significado físico/matemático da etapa.
+    # Pequena caixa textual que muda com o andamento da minimização.
     if k == 0:
         explanation = (
             "INÍCIO\n\n"
@@ -589,11 +479,7 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
         transform=ax_state.transAxes,
         fontsize=11,
         va="top",
-        bbox=dict(
-            boxstyle="round,pad=0.5",
-            facecolor="white",
-            alpha=0.90,
-        ),
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="white", alpha=0.90),
     )
 
     ax_state.set_xlim(-2, 12)
@@ -602,54 +488,27 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
     ax_state.set_ylabel("Valor da função custo")
     ax_state.set_title(
         "Painel esquerdo — espaço de estado\n"
-        r"O mesmo $x_k$ é avaliado em $J_B$, $J_O$ e $J$"
+        r"$x_k$ anda em passos discretos e é avaliado em $J_B$, $J_O$ e $J$"
     )
     ax_state.grid(alpha=0.25)
-    ax_state.legend(loc="upper center", fontsize=9)
+    ax_state.legend(loc="upper center", fontsize=8.7)
 
-    # ------------------------------------------------------------------------
-    # PAINEL DIREITO — HISTÓRIA DA MINIMIZAÇÃO
-    # ------------------------------------------------------------------------
-    #
-    # Aqui o eixo horizontal NÃO representa mais o estado x. Ele representa o
-    # número da iteração k. Os valores desenhados são exatamente aqueles
-    # calculados no painel esquerdo para cada x_k visitado.
-    #
-    # Usamos somente history[:frame+1], portanto as curvas crescem passo a passo
-    # e reproduzem visualmente a evolução de um gráfico real de convergência.
-    # ------------------------------------------------------------------------
-
-    shown = history[: frame + 1]
+    # ========================================================================
+    # PAINEL DIREITO — HISTÓRICO DA MINIMIZAÇÃO
+    # ========================================================================
+    # Aqui usamos exatamente o mesmo histórico, mas agora como função da
+    # iteração k. As curvas são construídas progressivamente, ponto a ponto.
+    # ========================================================================
 
     iterations = [d["k"] for d in shown]
     values_jb = [d["Jb"] for d in shown]
     values_jo = [d["Jo"] for d in shown]
     values_j = [d["J"] for d in shown]
 
-    ax_iter.plot(
-        iterations,
-        values_jo,
-        marker="o",
-        linewidth=2.4,
-        label=r"$J_O(k)$",
-    )
-    ax_iter.plot(
-        iterations,
-        values_jb,
-        marker="o",
-        linewidth=2.4,
-        label=r"$J_B(k)$",
-    )
-    ax_iter.plot(
-        iterations,
-        values_j,
-        marker="o",
-        linewidth=3.0,
-        label=r"$J(k)$",
-    )
+    ax_iter.plot(iterations, values_jo, marker="o", linewidth=2.4, label=r"$J_O(k)$")
+    ax_iter.plot(iterations, values_jb, marker="o", linewidth=2.4, label=r"$J_B(k)$")
+    ax_iter.plot(iterations, values_j, marker="o", linewidth=3.0, label=r"$J(k)$")
 
-    # Destaques da iteração atual. O ponto vermelho em J(k) corresponde à mesma
-    # bolinha vermelha mostrada no painel esquerdo sobre J(x_k).
     ax_iter.scatter(k, jo, s=110, zorder=10)
     ax_iter.scatter(k, jb, s=110, zorder=10)
     ax_iter.scatter(k, jt, s=130, color="red", zorder=11)
@@ -688,8 +547,6 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
     ax_iter.grid(alpha=0.25)
     ax_iter.legend(loc="upper right")
 
-    # O título geral amarra os dois painéis ao mesmo estado x_k e mostra também
-    # o gradiente. Quando grad J -> 0, estamos nos aproximando do mínimo.
     fig.suptitle(
         "Minimização variacional em um problema escalar\n"
         + rf"iteração {k}:  $x_k={xk:.3f}$,  $\nabla J={grad:.3f}$",
@@ -698,25 +555,15 @@ def draw_frame(fig, ax_state, ax_iter, history, frame):
 
 
 # ============================================================================
-# 7. SAÍDA TEXTUAL DE CADA PASSO
+# 7. IMPRESSÃO NO TERMINAL
+# ============================================================================
+# Além da visualização gráfica, o programa imprime cada passo do algoritmo no
+# terminal. Isso ajuda a acompanhar explicitamente a natureza discreta do método.
 # ============================================================================
 
 
 def print_step(data, alpha):
-    """Imprime no terminal os valores e a atualização da iteração atual.
-
-    A saída textual complementa a animação. Ela permite acompanhar numericamente
-    como um estado x_k produz os valores J_B, J_O e J e como o gradiente define
-    o próximo estado x_{k+1}.
-
-    Parameters
-    ----------
-    data : dict
-        Registro de uma iteração do histórico.
-
-    alpha : float
-        Tamanho do passo usado pelo gradiente descendente.
-    """
+    """Imprime no terminal os valores da iteração atual e o próximo passo."""
     k = data["k"]
     xk = data["x"]
     jb = data["Jb"]
@@ -742,27 +589,12 @@ def print_step(data, alpha):
 
 
 # ============================================================================
-# 8. MODO INTERATIVO
+# 8. EXECUÇÃO INTERATIVA
 # ============================================================================
 
 
 def run_interactive(history, alpha, pause):
-    """Reproduz a minimização lentamente em uma janela do Matplotlib.
-
-    Cada quadro corresponde a uma iteração do histórico. O tempo de pausa
-    controla quanto tempo o usuário tem para observar e explicar cada passo.
-
-    Parameters
-    ----------
-    history : list of dict
-        Histórico completo da minimização.
-
-    alpha : float
-        Tamanho do passo, usado apenas na impressão da atualização numérica.
-
-    pause : float
-        Tempo, em segundos, entre duas iterações consecutivas.
-    """
+    """Exibe a animação em uma janela interativa."""
     fig, ax_state, ax_iter = create_figure()
     plt.ion()
 
@@ -773,10 +605,6 @@ def run_interactive(history, alpha, pause):
         plt.pause(pause)
 
     plt.ioff()
-
-    # Comparação final entre a solução analítica e o último estado obtido pelo
-    # minimizador. Quanto mais iterações, mais próximo o valor numérico fica de
-    # x_a.
     print("\n" + "=" * 68)
     print("RESULTADO")
     print("=" * 68)
@@ -784,39 +612,35 @@ def run_interactive(history, alpha, pause):
     print(f"Observação                y = {y:.6f}")
     print(f"Análise analítica        x_a = {xa:.6f}")
     print(f"Último estado numérico       = {history[-1]['x']:.6f}")
-
     plt.show()
 
 
 # ============================================================================
-# 9. GERAÇÃO DO GIF
+# 9. SALVAR GIF
+# ============================================================================
+# A mesma rotina draw_frame é usada tanto na visualização interativa quanto na
+# criação do GIF. Portanto, qualquer melhoria visual introduzida na animação
+# interativa aparece automaticamente no GIF exportado.
 # ============================================================================
 
 
 def save_gif(history, output, interval_ms):
-    """Salva a mesma demonstração interativa em um arquivo GIF.
-
-    O GIF é útil para documentação no GitHub, pois permite visualizar a
-    minimização diretamente no README sem executar o script.
+    """Salva a animação como GIF.
 
     Parameters
     ----------
     history : list of dict
-        Histórico completo da minimização.
-
-    output : str ou pathlib.Path
-        Caminho do arquivo GIF de saída.
-
+        Histórico gerado pelo minimizador.
+    output : str or pathlib.Path
+        Caminho do GIF a ser gravado.
     interval_ms : int
-        Intervalo entre dois quadros consecutivos, em milissegundos.
+        Intervalo entre quadros em milissegundos.
     """
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-
     fig, ax_state, ax_iter = create_figure()
 
     def update(frame):
-        """Callback chamado pelo FuncAnimation para desenhar cada quadro."""
         draw_frame(fig, ax_state, ax_iter, history, frame)
         return []
 
@@ -828,16 +652,8 @@ def save_gif(history, output, interval_ms):
         repeat=True,
     )
 
-    # PillowWriter trabalha em frames por segundo. O valor abaixo converte o
-    # intervalo solicitado em uma taxa inteira mínima de 1 fps.
     fps = max(1, round(1000 / interval_ms))
-
-    animation.save(
-        output,
-        writer=PillowWriter(fps=fps),
-        dpi=105,
-    )
-
+    animation.save(output, writer=PillowWriter(fps=fps), dpi=105)
     plt.close(fig)
     print(f"GIF salvo em: {output}")
 
@@ -845,17 +661,15 @@ def save_gif(history, output, interval_ms):
 # ============================================================================
 # 10. INTERFACE DE LINHA DE COMANDO
 # ============================================================================
+# Permite ajustar velocidade, número de iterações e exportação para GIF.
+# ============================================================================
 
 
 def main():
-    """Processa os argumentos e seleciona execução interativa ou geração GIF."""
+    """Função principal da aplicação."""
     parser = argparse.ArgumentParser(
-        description=(
-            "Demonstração escalar da minimização variacional de "
-            "J = J_B + J_O."
-        )
+        description="Demonstração escalar da minimização variacional."
     )
-
     parser.add_argument(
         "--alpha",
         type=float,
@@ -866,7 +680,7 @@ def main():
         "--iterations",
         type=int,
         default=10,
-        help="Número de iterações da minimização (default: 10).",
+        help="Número de iterações (default: 10).",
     )
     parser.add_argument(
         "--pause",
@@ -886,10 +700,8 @@ def main():
         default=1200,
         help="Intervalo entre quadros do GIF em ms (default: 1200).",
     )
-
     args = parser.parse_args()
 
-    # Validações simples evitam configurações sem sentido para a demonstração.
     if args.iterations < 1:
         parser.error("--iterations deve ser >= 1")
     if args.alpha <= 0:
@@ -899,10 +711,7 @@ def main():
     if args.gif_interval <= 0:
         parser.error("--gif-interval deve ser > 0")
 
-    # A minimização é executada uma única vez. Tanto o modo interativo quanto o
-    # GIF usam exatamente o mesmo histórico e, portanto, mostram os mesmos
-    # valores de x_k, J_B, J_O e J.
-    history = run_minimization(args.alpha, args.iterations)
+    history = run_minimization(alpha=args.alpha, n_iterations=args.iterations)
 
     if args.save_gif:
         save_gif(history, args.save_gif, args.gif_interval)
